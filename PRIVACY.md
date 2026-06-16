@@ -53,4 +53,4 @@ new "Last updated" date.
 ## Contact
 
 If you have questions about this privacy policy, contact:
-**[your email address]**
+**modikush80@gmail.com**
