@@ -4,7 +4,7 @@ Need help with **Trimage: RAW & JPEG Compressor**? We're happy to help.
 
 ## Contact
 
-- **Email:** your-email@example.com
+- **Email:** modikush80@gmail.com
 
 We typically respond within 2–3 business days.
 
