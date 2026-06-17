@@ -19,3 +19,6 @@ build/
 # CocoaPods / Carthage (if ever used)
 Pods/
 Carthage/Build/
+
+# Kiro workspace (local steering/config)
+.kiro/
