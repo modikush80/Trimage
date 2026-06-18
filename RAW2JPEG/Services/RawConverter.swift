@@ -42,11 +42,35 @@ func originalRawFileSize(for asset: PHAsset) -> Int64 {
 
 // MARK: - Mode-based Asset Matching
 
+/// Raster image formats worth re-encoding to JPEG to reclaim storage:
+/// - JPEG: recompressed at a lower quality.
+/// - PNG / TIFF / BMP / GIF: lossless or weakly-compressed, so a JPEG is
+///   usually dramatically smaller.
+///
+/// HEIC / HEIF are deliberately excluded — they are already more efficient
+/// than JPEG, so converting them would *increase* the file size.
+func isCompressibleToJPEG(_ ut: UTType) -> Bool {
+    // Never touch HEIC/HEIF — converting them to JPEG grows the file.
+    if ut.conforms(to: .heic) || ut.conforms(to: .heif) { return false }
+    let compressible: [UTType] = [.jpeg, .png, .tiff, .bmp, .gif]
+    return compressible.contains { ut.conforms(to: $0) }
+}
+
+/// True when the asset is stored as HEIC/HEIF. Used to explain to the user why
+/// a selected photo was skipped in Compress mode (converting it would grow it).
+func assetHasHEIC(_ asset: PHAsset) -> Bool {
+    PHAssetResource.assetResources(for: asset).contains { res in
+        guard let ut = UTType(res.uniformTypeIdentifier) else { return false }
+        return ut.conforms(to: .heic) || ut.conforms(to: .heif)
+    }
+}
+
 /// Whether an asset is eligible for the given library mode.
 /// - `.raw`: the asset has a RAW/DNG resource.
-/// - `.compress`: the asset has a JPEG resource at or above `sizeThreshold`
-///   bytes. HEIC and other formats are intentionally skipped because
-///   re-encoding them to JPEG would usually *increase* file size.
+/// - `.compress`: the asset has a compressible image resource (see
+///   `isCompressibleToJPEG`) at or above `sizeThreshold` bytes. HEIC/HEIF are
+///   intentionally skipped because re-encoding them to JPEG would usually
+///   *increase* file size.
 func assetMatchesMode(_ asset: PHAsset, mode: AppState.LibraryMode, sizeThreshold: Int64) -> Bool {
     let resources = PHAssetResource.assetResources(for: asset)
     switch mode {
@@ -57,7 +81,14 @@ func assetMatchesMode(_ asset: PHAsset, mode: AppState.LibraryMode, sizeThreshol
         }
     case .compress:
         return resources.contains { res in
-            guard let ut = UTType(res.uniformTypeIdentifier), ut.conforms(to: .jpeg) else { return false }
+            guard let ut = UTType(res.uniformTypeIdentifier), isCompressibleToJPEG(ut) else { return false }
+            return resourceFileSize(res) >= sizeThreshold
+        }
+    case .screenshots:
+        // Must be a screenshot AND a compressible (non-HEIC) image above the size threshold.
+        guard asset.mediaSubtypes.contains(.photoScreenshot) else { return false }
+        return resources.contains { res in
+            guard let ut = UTType(res.uniformTypeIdentifier), isCompressibleToJPEG(ut) else { return false }
             return resourceFileSize(res) >= sizeThreshold
         }
     }

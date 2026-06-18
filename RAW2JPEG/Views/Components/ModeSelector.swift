@@ -41,6 +41,8 @@ struct ModeSelector: View {
                     .font(.subheadline.weight(.semibold))
                 Text(item.shortTitle)
                     .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 11)

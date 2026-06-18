@@ -219,16 +219,14 @@ extension ContentView {
         VStack(spacing: 24) {
             Spacer()
 
-            Image(systemName: "camera.aperture")
+            Image(systemName: state.libraryMode.icon)
                 .font(.system(size: 56, weight: .ultraLight))
                 .foregroundStyle(.white.opacity(0.4))
 
             VStack(spacing: 8) {
-                Text(state.libraryMode == .raw ? "No RAW Photos" : "No Large JPEGs")
+                Text(state.libraryMode.emptyTitle)
                     .font(.title3.weight(.semibold))
-                Text(state.libraryMode == .raw
-                     ? "Select photos with + or convert\nyour entire RAW library at once"
-                     : "Select photos with + or scan for\nlarge JPEGs to recompress")
+                Text(state.libraryMode.emptySubtitle)
                     .font(.subheadline).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
@@ -257,7 +255,7 @@ extension ContentView {
                 }
 
                 Button { Task { await state.convertEntireLibrary() } } label: {
-                    Label(state.libraryMode == .raw ? "Convert Entire Library" : "Compress All Large JPEGs",
+                    Label(state.libraryMode.convertAllTitle,
                           systemImage: "arrow.triangle.2.circlepath")
                         .font(.subheadline.weight(.medium))
                         .frame(maxWidth: 260).padding(.vertical, 12)
@@ -265,7 +263,7 @@ extension ContentView {
                 }
 
                 Button { Task { await state.scanAll() } } label: {
-                    Label(state.libraryMode == .raw ? "Find All RAW First" : "Find Large JPEGs First",
+                    Label(state.libraryMode.scanFirstTitle,
                           systemImage: "magnifyingglass")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
@@ -282,7 +280,7 @@ extension ContentView {
         VStack(spacing: 14) {
             Spacer()
             ProgressView().controlSize(.large)
-            Text("Scanning for RAW photos…")
+            Text("Scanning for \(state.libraryMode.noun)s…")
                 .font(.subheadline).foregroundStyle(.secondary)
             Spacer()
         }

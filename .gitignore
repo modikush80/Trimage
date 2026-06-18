@@ -22,3 +22,12 @@ Carthage/Build/
 
 # Kiro workspace (local steering/config)
 .kiro/
+
+# Xcode export archives / packaging output
+RAW2JPEG */
+DistributionSummary.plist
+ExportOptions.plist
+Packaging.log
+
+# Repo docs assets are tracked; ignore stray OS files inside
+docs/**/.DS_Store

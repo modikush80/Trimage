@@ -42,41 +42,48 @@ extension ContentView {
                     Text("When off, photos are saved as standard SDR JPEGs (smaller files, no HDR).")
                 }
 
-                if state.libraryMode == .compress {
+                if state.libraryMode != .raw {
                     Section {
                         VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Minimum Size")
-                                Spacer()
-                                Text(String(format: "%.1f MB", state.minPhotoSizeMB))
-                                    .foregroundStyle(.secondary).monospacedDigit()
+                            Text("Minimum Size")
+                            Picker("Minimum Size", selection: $state.sizePreset) {
+                                ForEach(AppState.SizePreset.allCases) { preset in
+                                    Text(preset.rawValue).tag(preset)
+                                }
                             }
-                            Slider(value: $state.minPhotoSizeMB, in: 0.5...10.0, step: 0.5)
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            Text(state.sizePreset.detail)
+                                .font(.caption2).foregroundStyle(.secondary)
                         }
                     } header: {
-                        Text("Compress JPEG")
+                        Text(state.libraryMode == .screenshots ? "Screenshot Cleanup" : "Compress Images")
                     } footer: {
-                        Text("Scans only skip JPEGs smaller than this. Recompressing an already-compressed JPEG slightly reduces quality, so it's only worth it for large files. HEIC photos are left untouched (converting them would increase size). Lower the quality above for real savings.")
+                        if state.libraryMode == .screenshots {
+                            Text("Scans skip screenshots smaller than this. Screenshots are usually PNGs — converting them to JPEG can dramatically shrink them. Lower the quality above for bigger savings.")
+                        } else {
+                            Text("Scans skip images smaller than this. JPEG, PNG, TIFF, BMP and GIF are supported — recompressing to JPEG reclaims space (most dramatic for PNG/TIFF). HEIC photos are left untouched (converting them would increase size). Lower the quality above for real savings.")
+                        }
                     }
                 }
 
                 Section {
-                    HStack {
-                        Label("Photos Converted", systemImage: "photo.stack")
-                        Spacer()
-                        Text("\(state.lifetimeConverted)").foregroundStyle(.secondary).monospacedDigit()
+                    HStack(spacing: 12) {
+                        statTile(
+                            value: formatBytes(state.lifetimeSavedBytes),
+                            label: "Space Saved",
+                            systemImage: "internaldrive.fill",
+                            tint: .green
+                        )
+                        statTile(
+                            value: "\(state.lifetimeConverted)",
+                            label: state.lifetimeConverted == 1 ? "Photo" : "Photos",
+                            systemImage: "photo.stack.fill",
+                            tint: .blue
+                        )
                     }
-                    HStack {
-                        Label("Total Space Saved", systemImage: "internaldrive")
-                        Spacer()
-                        Text(formatBytes(state.lifetimeSavedBytes))
-                            .foregroundStyle(.green).fontWeight(.semibold).monospacedDigit()
-                    }
-                    if state.lifetimeConverted > 0 {
-                        Button(role: .destructive) { state.resetLifetimeStats() } label: {
-                            Text("Reset Statistics")
-                        }
-                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .listRowBackground(Color.clear)
                 } header: {
                     Text("Lifetime Savings")
                 } footer: {
@@ -91,7 +98,7 @@ extension ContentView {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large], selection: $settingsDetent)
     }
 
     var qualityHint: String {
@@ -128,6 +135,31 @@ extension ContentView {
     }
 
     // MARK: - Helpers
+
+    /// A single glass stat tile used in the Lifetime Savings card.
+    @ViewBuilder
+    func statTile(value: String, label: String, systemImage: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.title3)
+                .foregroundStyle(tint)
+            Text(value)
+                .font(.title2.weight(.bold))
+                .monospacedDigit()
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+        )
+    }
 
     func formatBytes(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()

@@ -15,6 +15,8 @@ struct ContentView: View {
     @State var didRequestAccess = false
     @State var showDatePicker = false
     @State var showSettings = false
+    /// Settings sheet opens full-height by default; user can still drag it down.
+    @State var settingsDetent: PresentationDetent = .large
 
     /// Caps content width on large screens (iPad / Mac) so the iPhone-oriented
     /// layout stays readable and centered instead of stretching edge to edge.
@@ -84,6 +86,11 @@ struct ContentView: View {
         } message: {
             Text("\(state.lastMovedCount) original \(state.libraryMode.noun)\(state.lastMovedCount == 1 ? "" : "s") moved to the \"\(state.albumName)\" album.\n\nOpen Photos → Albums → \"\(state.albumName)\" to review and delete them.")
         }
+        .alert(state.selectionInfoTitle, isPresented: $state.showSelectionInfo) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(state.selectionInfoMessage)
+        }
     }
 
     // MARK: - Toolbar
@@ -110,12 +117,12 @@ struct ContentView: View {
         }
         ToolbarItemGroup(placement: .secondaryAction) {
             Button { Task { await state.scanAll() } } label: {
-                Label(state.libraryMode == .raw ? "Find All RAW" : "Find Large JPEGs", systemImage: "magnifyingglass")
+                Label(state.libraryMode.scanActionTitle, systemImage: "magnifyingglass")
             }
             .disabled(state.isProcessing || state.isLoading)
 
             Button { Task { await state.convertEntireLibrary() } } label: {
-                Label(state.libraryMode == .raw ? "Convert Entire Library" : "Compress All Large JPEGs", systemImage: "arrow.triangle.2.circlepath")
+                Label(state.libraryMode.convertAllTitle, systemImage: "arrow.triangle.2.circlepath")
             }
             .disabled(state.isProcessing || state.isLoading)
 

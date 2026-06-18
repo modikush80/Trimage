@@ -27,6 +27,11 @@ final class AppState: ObservableObject {
     @Published var needsFullAccess = false
     @Published var showMoveSuccess = false
     @Published var lastMovedCount = 0
+    /// Drives a clear explanatory alert when a manual selection adds nothing
+    /// (e.g. the picked photos were all HEIC, which Compress mode skips).
+    @Published var showSelectionInfo = false
+    @Published var selectionInfoTitle = ""
+    @Published var selectionInfoMessage = ""
     @Published var jpegQuality: Double = 0.90
     @Published var preserveHDR: Bool = true
     // Lifetime stats (persisted in UserDefaults)
@@ -39,30 +44,126 @@ final class AppState: ObservableObject {
             pendingDeleteAssets = []
         }
     }
-    /// Minimum JPEG size (in MB) considered worth recompressing in `.compress` mode.
-    @Published var minPhotoSizeMB: Double = 2.0
+    /// User-facing minimum-size preset for scans. Backs `minPhotoSizeMB`.
+    @Published var sizePreset: SizePreset = .medium
+
+    /// Minimum file size (MB) a photo must reach to be included in scans.
+    /// Derived from the selected preset so all scan logic stays unchanged.
+    var minPhotoSizeMB: Double { sizePreset.thresholdMB }
+
+    /// Preset minimum-size buckets shown as Small / Medium / Large in settings.
+    /// The label describes the *photos you target*: "Large" means only the
+    /// biggest files; "Small" reaches down to smaller ones too.
+    enum SizePreset: String, CaseIterable, Identifiable {
+        case small = "Small"
+        case medium = "Medium"
+        case large = "Large"
+        var id: String { rawValue }
+        /// Minimum file size in MB for this preset.
+        var thresholdMB: Double {
+            switch self {
+            case .small: 1.0
+            case .medium: 2.0
+            case .large: 5.0
+            }
+        }
+        /// One-line explanation of what the preset includes.
+        var detail: String {
+            switch self {
+            case .small: "Includes photos 1 MB and larger"
+            case .medium: "Includes photos 2 MB and larger · recommended"
+            case .large: "Only the biggest — photos 5 MB and larger"
+            }
+        }
+    }
 
     /// Album that converted/recompressed originals are moved into. Named per mode
     /// so RAW originals and recompressed originals stay in separate albums.
     var albumName: String {
-        libraryMode == .raw ? "RAW Originals" : "Compressed Originals"
+        switch libraryMode {
+        case .raw: "RAW Originals"
+        case .compress: "Compressed Originals"
+        case .screenshots: "Screenshot Originals"
+        }
     }
 
     enum LibraryMode: String, CaseIterable, Identifiable {
         case raw = "RAW → JPEG"
         case compress = "Compress JPEG"
+        case screenshots = "Screenshots"
         var id: String { rawValue }
+
         /// Singular human-readable name for the assets this mode operates on.
-        var noun: String { self == .raw ? "RAW photo" : "large JPEG" }
+        var noun: String {
+            switch self {
+            case .raw: "RAW photo"
+            case .compress: "large JPEG"
+            case .screenshots: "screenshot"
+            }
+        }
         /// Short label for the segmented mode selector.
-        var shortTitle: String { self == .raw ? "RAW" : "Compress" }
+        var shortTitle: String {
+            switch self {
+            case .raw: "RAW"
+            case .compress: "Compress"
+            case .screenshots: "Screenshots"
+            }
+        }
         /// SF Symbol representing the mode.
-        var icon: String { self == .raw ? "camera.aperture" : "arrow.down.right.and.arrow.up.left" }
+        var icon: String {
+            switch self {
+            case .raw: "camera.aperture"
+            case .compress: "arrow.down.right.and.arrow.up.left"
+            case .screenshots: "rectangle.dashed"
+            }
+        }
         /// One-line description shown under the selector.
         var subtitle: String {
-            self == .raw
-                ? "Convert RAW photos into space-saving JPEGs"
-                : "Recompress large JPEGs to reclaim storage"
+            switch self {
+            case .raw: "Convert RAW photos into space-saving JPEGs"
+            case .compress: "Recompress large JPEGs to reclaim storage"
+            case .screenshots: "Shrink space-hungry screenshots to JPEG"
+            }
+        }
+        /// Title for the "find/scan" action.
+        var scanActionTitle: String {
+            switch self {
+            case .raw: "Find All RAW"
+            case .compress: "Find Large JPEGs"
+            case .screenshots: "Find Screenshots"
+            }
+        }
+        /// Title for the "scan first" link on the empty state.
+        var scanFirstTitle: String {
+            switch self {
+            case .raw: "Find All RAW First"
+            case .compress: "Find Large JPEGs First"
+            case .screenshots: "Find Screenshots First"
+            }
+        }
+        /// Title for the "convert/clean the whole library" action.
+        var convertAllTitle: String {
+            switch self {
+            case .raw: "Convert Entire Library"
+            case .compress: "Compress All Large JPEGs"
+            case .screenshots: "Clean Up All Screenshots"
+            }
+        }
+        /// Empty-state headline.
+        var emptyTitle: String {
+            switch self {
+            case .raw: "No RAW Photos"
+            case .compress: "No Large JPEGs"
+            case .screenshots: "No Screenshots"
+            }
+        }
+        /// Empty-state supporting text.
+        var emptySubtitle: String {
+            switch self {
+            case .raw: "Select photos with + or convert\nyour entire RAW library at once"
+            case .compress: "Select photos with + or scan for\nlarge JPEGs to recompress"
+            case .screenshots: "Select screenshots with + or scan\nyour library for screenshots to shrink"
+            }
         }
     }
 
@@ -134,14 +235,6 @@ final class AppState: ObservableObject {
         d.set(lifetimeConverted, forKey: kConverted)
     }
 
-    func resetLifetimeStats() {
-        lifetimeSavedBytes = 0
-        lifetimeConverted = 0
-        let d = UserDefaults.standard
-        d.removeObject(forKey: kSavedBytes)
-        d.removeObject(forKey: kConverted)
-    }
-
     func addFromPicker(_ items: [PhotosPickerItem]) {
         let identifiers = items.compactMap(\.itemIdentifier)
         guard !identifiers.isEmpty else { return }
@@ -149,18 +242,22 @@ final class AppState: ObservableObject {
         let mode = libraryMode
         let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
         var newAssets: [PHAsset] = []
-        var skippedCount = 0
+        var skippedHEIC = 0
+        var skippedOther = 0
 
         fetchResult.enumerateObjects { asset, _, _ in
-            // For an explicit manual selection, accept any JPEG regardless of size
-            // (the size threshold only governs automatic scans).
+            // For an explicit manual selection, accept any supported image
+            // regardless of size (the size threshold only governs auto scans).
             if assetMatchesMode(asset, mode: mode, sizeThreshold: 0) {
                 newAssets.append(asset)
+            } else if mode == .compress && assetHasHEIC(asset) {
+                skippedHEIC += 1
             } else {
-                skippedCount += 1
+                skippedOther += 1
             }
         }
 
+        let skippedCount = skippedHEIC + skippedOther
         let existingIDs = Set(rawAssets.map(\.localIdentifier))
         let toAdd = newAssets.filter { !existingIDs.contains($0.localIdentifier) }
         rawAssets.append(contentsOf: toAdd)
@@ -168,12 +265,36 @@ final class AppState: ObservableObject {
 
         let noun = mode.noun
         if toAdd.isEmpty && skippedCount > 0 {
-            status = mode == .raw
-                ? "\(skippedCount) skipped — not RAW/DNG"
-                : "\(skippedCount) skipped — not a JPEG"
+            // Users were confused by the silent no-op, so explain it plainly.
+            let plural = skippedCount == 1 ? "" : "s"
+            if mode == .raw {
+                selectionInfoTitle = "No RAW photos added"
+                selectionInfoMessage = "None of the \(skippedCount) selected photo\(plural) \(skippedCount == 1 ? "is a" : "are") RAW/DNG file\(plural), so there's nothing to convert. Switch to Compress mode to shrink large JPEGs, PNGs or TIFFs."
+                status = "\(skippedCount) skipped — not RAW/DNG"
+            } else if mode == .screenshots {
+                selectionInfoTitle = "No screenshots added"
+                selectionInfoMessage = "None of the \(skippedCount) selected item\(plural) \(skippedCount == 1 ? "is a" : "are") screenshot\(plural), so there's nothing to clean up here. Pick screenshots, or switch to Compress mode for large photos."
+                status = "\(skippedCount) skipped — not screenshots"
+            } else if skippedHEIC > 0 && skippedOther == 0 {
+                selectionInfoTitle = "Already efficient (HEIC)"
+                selectionInfoMessage = "These \(skippedCount) photo\(plural) \(skippedCount == 1 ? "is" : "are") already saved as HEIC — a more space-efficient format than JPEG. Converting them would make the files larger, so they were left untouched."
+                status = "\(skippedCount) HEIC photo\(plural) skipped"
+            } else if skippedHEIC > 0 {
+                selectionInfoTitle = "Nothing to compress"
+                selectionInfoMessage = "\(skippedHEIC) photo\(skippedHEIC == 1 ? " is" : "s are") already HEIC (converting would increase size) and \(skippedOther) \(skippedOther == 1 ? "is" : "are") in an unsupported format, so nothing was added."
+                status = "\(skippedCount) skipped"
+            } else {
+                selectionInfoTitle = "Unsupported format"
+                selectionInfoMessage = "These \(skippedCount) item\(plural) \(skippedCount == 1 ? "isn't" : "aren't") a supported image for compression. JPEG, PNG, TIFF, BMP and GIF are supported."
+                status = "\(skippedCount) skipped — unsupported"
+            }
+            showSelectionInfo = true
         } else if !toAdd.isEmpty {
             var msg = "Added \(toAdd.count) \(noun)\(toAdd.count == 1 ? "" : "s")"
-            if skippedCount > 0 { msg += " · \(skippedCount) skipped" }
+            if skippedCount > 0 {
+                msg += " · \(skippedCount) skipped"
+                if skippedHEIC > 0 { msg += " (HEIC)" }
+            }
             status = msg
         }
     }
@@ -189,6 +310,12 @@ final class AppState: ObservableObject {
         let found: [PHAsset] = await Task.detached(priority: .userInitiated) {
             let opts = PHFetchOptions()
             opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            // Narrow the fetch to screenshots up front so we don't enumerate the
+            // whole library when cleaning up screenshots.
+            if mode == .screenshots {
+                opts.predicate = NSPredicate(format: "(mediaSubtype & %d) != 0",
+                                             PHAssetMediaSubtype.photoScreenshot.rawValue)
+            }
             let all = PHAsset.fetchAssets(with: .image, options: opts)
             var results: [PHAsset] = []
             all.enumerateObjects { asset, _, _ in
@@ -203,9 +330,19 @@ final class AppState: ObservableObject {
         selectedIDs = Set(found.map(\.localIdentifier))
         isLoading = false
         let noun = mode.noun
-        status = found.isEmpty
-            ? "No \(noun)s found"
-            : "Found \(found.count) \(noun)\(found.count == 1 ? "" : "s")"
+        if found.isEmpty {
+            let minMB = String(format: "%.1f", minPhotoSizeMB)
+            switch mode {
+            case .compress:
+                status = "No images above \(minMB) MB — lower Minimum Size in settings to include smaller ones"
+            case .screenshots:
+                status = "No screenshots above \(minMB) MB — lower Minimum Size in settings to include smaller ones"
+            case .raw:
+                status = "No \(noun)s found"
+            }
+        } else {
+            status = "Found \(found.count) \(noun)\(found.count == 1 ? "" : "s")"
+        }
     }
 
     func convertEntireLibrary() async {
